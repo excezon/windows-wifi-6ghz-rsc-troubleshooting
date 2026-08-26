@@ -1,18 +1,28 @@
-# Part 3 — Benchmarks and validation
+# Benchmarks and Validation
 
-## Test goal
+[English](03-benchmarks.md) | [简体中文](03-benchmarks.zh-CN.md) · [Back to README](../README.md)
 
-The benchmark phase was not used to discover the root cause by itself. Its purpose was to verify that:
+## Purpose
 
-1. Windows 6 GHz / Wi-Fi 7 was actually working;
-2. RSC was genuinely operational after removing the NDIS/WFP blockers;
-3. the improvement persisted across multiple Speedtest servers and real application traffic.
+These benchmarks were used as validation, not as proof by themselves. The important sequence was:
+
+```text
+identify root cause
+        ↓
+change one variable
+        ↓
+verify RSC state/counters
+        ↓
+measure throughput
+```
+
+Different Speedtest servers varied enormously, so a single slow server should not be interpreted as the Wi-Fi ceiling.
 
 ---
 
-## Best complete Speedtest result
+## Best complete result
 
-### Symphony Communication PCL — 4541.58 Mbps
+### Symphony Communication PCL — server 62530
 
 ```text
 Download : 4541.58 Mbps
@@ -22,6 +32,14 @@ Upload   : 2395.46 Mbps
 Result URL:
 
 https://www.speedtest.net/result/c/dd48f131-0ddf-4158-aba9-dba5a3884f41
+
+With an approximately 5764.8 Mbps PHY:
+
+```text
+4541.58 / 5764.8 ≈ 78.8%
+```
+
+That is already an unusually high application-layer efficiency for Wi-Fi.
 
 ---
 
@@ -40,41 +58,13 @@ https://www.speedtest.net/result/c/dd48f131-0ddf-4158-aba9-dba5a3884f41
 | Singtel | 13623 | 2669.37 Mbps | 2497.99 Mbps | https://www.speedtest.net/result/c/8349280f-1186-48c2-8468-f120bbfdef8f |
 | WhizComms | 75893 | 2452.17 Mbps | 2384.82 Mbps | https://www.speedtest.net/result/c/7b6f087b-4ce1-49ab-b9c7-7d7036148f0a |
 
-The variation between servers is large enough that the Speedtest server itself clearly matters.
-
----
-
-## PHY efficiency
-
-The MT7927 2×2 / 320 MHz EHT link had previously shown an expected maximum PHY around:
-
-```text
-5764.8 Mbps
-```
-
-Using the best complete result:
-
-```text
-4541.58 / 5764.8 ≈ 78.8%
-```
-
-So the application-level Speedtest throughput reached roughly 79% of PHY.
-
-For comparison, 5 Gbps would require:
-
-```text
-5000 / 5764.8 ≈ 86.7%
-```
-
-That is extremely aggressive once Wi-Fi MAC overhead, ACKs, inter-frame spacing, TCP/IP overhead, aggregation efficiency, retransmissions, airtime scheduling and driver/NDIS processing are considered.
-
-In this setup, stable ~4.3–4.5 Gbps was therefore treated as a realistic practical ceiling rather than continuing to chase a round 5 Gbps number.
+The large spread — roughly 2.45 to 4.54 Gbps — is a reminder that the server, path and server-side test implementation can become the bottleneck.
 
 ---
 
 ## Repeated Symphony runs
 
-Repeated runs against server `62530` clustered around the same range rather than producing one isolated spike:
+Several repeated complete tests on server 62530 clustered around the mid-4-Gbps range:
 
 ```text
 4357.77 Mbps
@@ -84,41 +74,75 @@ Repeated runs against server `62530` clustered around the same range rather than
 4454.66 Mbps
 ```
 
-This was useful evidence that the ~4.5 Gbps result was repeatable.
+This matters because it shows the 4.5 Gbps result was not a single impossible spike. The working plateau was consistently around 4.3–4.5 Gbps when the test server cooperated.
 
 ---
 
-## Repeated download-only A/B between top servers
+## Repeated download-only A/B between 62530 and 13058
 
-The two strongest candidates were Symphony (`62530`) and PT. Indosat (`13058`). Download-only repeated tests frequently landed around:
+To reduce time spent on uploads while searching for a ceiling, the two fastest servers were alternated.
+
+Representative results:
 
 ```text
-62530:
-4424
-4303
-4437
-4407
-4355
-4439
-...
+62530: 4424.33
+13058: 4469.99
 
-13058:
-4470
-4448
-4468
-4299
-4320
-4435
-...
+62530: 4302.88
+13058: 4447.70
+
+62530: 4436.94
+13058: 4467.73
+
+62530: 4406.60
+13058: 4299.10
+
+62530: 4354.58
+13058: 4319.79
 ```
 
-That clustering reinforced the conclusion that the system had reached a stable multi-gigabit platform limit rather than being artificially capped near 2 Gbps.
+Again, the practical plateau remained roughly 4.3–4.5 Gbps.
 
 ---
 
-## Real application traffic: Steam
+## Why 5 Gbps was considered unrealistic for this link
 
-A Cyberpunk 2077 Steam download reached approximately:
+The sane PHY rate observed for the 2×2 / 320 MHz link was approximately:
+
+```text
+5764.8 Mbps
+```
+
+The best complete Speedtest efficiency was therefore:
+
+```text
+4541.58 / 5764.8 ≈ 78.8%
+```
+
+To reach a 5 Gbps application-layer Speedtest:
+
+```text
+5000 / 5764.8 ≈ 86.7%
+```
+
+That leaves very little room for:
+
+- 802.11 MAC overhead;
+- ACKs;
+- inter-frame spacing;
+- aggregation inefficiency;
+- retransmission;
+- TCP/IP overhead;
+- airtime scheduling;
+- driver and OS processing.
+
+So the conclusion was not that 5 Gbps is mathematically impossible, but that **4.3–4.5 Gbps already looks close to the realistic ceiling of this particular 2×2 320 MHz client path**.
+
+---
+
+## Steam validation
+
+A real Steam download of Cyberpunk 2077 reached approximately:
 
 ```text
 344 MB/s
@@ -130,87 +154,87 @@ Converted to bits per second:
 344 × 8 ≈ 2752 Mbps
 ```
 
-or about 2.75 Gbps.
+or about **2.75 Gbps** of real application delivery.
 
-Another game, Forza Horizon 4, was closer to 200 MB/s, but CPU utilization was very high during that workload. That pointed more toward Steam decompression / patching / storage pipeline limits than Wi-Fi itself.
+Another game, Forza Horizon 4, was closer to 200 MB/s. During that test CPU usage was very high, so the likely bottleneck was game-download decompression/patch processing rather than Wi-Fi.
+
+This is a useful reminder that multi-gig networking can simply move the bottleneck elsewhere:
+
+```text
+network
+  ↓
+CPU decompression / hashing
+  ↓
+storage write / patch pipeline
+```
 
 ---
 
-## RSC validation with counters
+## RSC counter validation
 
-A much stronger validation than benchmark score alone was the RSC statistics delta.
-
-Before a test:
+Before one test:
 
 ```text
-CoalescedBytes   ≈ 469,690,352
-CoalescedPackets ≈ 321,744
-CoalescingEvents ≈ 15,424
+CoalescedBytes      469,690,352
+CoalescedPackets    321,744
+CoalescingEvents    15,424
+CoalescingExceptions 44,439
 ```
 
-After a high-speed download test:
+After a multi-gig Speedtest:
 
 ```text
-CoalescedBytes   ≈ 3,720,027,020
-CoalescedPackets ≈ 2,548,002
-CoalescingEvents ≈ 178,700
+CoalescedBytes      3,720,027,020
+CoalescedPackets    2,548,002
+CoalescingEvents    178,700
+CoalescingExceptions 193,278
 ```
 
-That proves several gigabytes of received traffic were actually processed through RSC after the fix.
+The multi-gig test moved several gigabytes through the RSC path, providing direct evidence that the offload/coalescing mechanism was actually active.
 
 ---
 
-## Useful commands
+## Latency behavior
 
-List nearby Ookla servers:
+One early post-fix StarHub test showed approximately:
+
+```text
+Idle latency       3.22 ms
+Download           2459.44 Mbps
+Loaded DL latency  6.69 ms
+Upload             2137.11 Mbps
+Packet loss        0%
+```
+
+Compared with earlier runs where loaded download latency could jump much higher, this was another sign that the receive path was healthier after RSC became operational.
+
+The fastest servers sometimes showed higher loaded latency while still delivering more throughput. That tradeoff is server/test-path dependent and should not be confused with local Wi-Fi failure.
+
+---
+
+## Recommended benchmark method
+
+1. Confirm the link is actually 6 GHz / EHT / expected channel width.
+2. Check RSC operational state before testing.
+3. Check RSC counters before testing.
+4. Test multiple nearby servers.
+5. Repeat the best two or three servers.
+6. Re-check RSC counters after testing.
+7. Compare with a real application such as Steam if possible.
+8. Do not treat one bad Speedtest server as the client ceiling.
+
+Useful command:
 
 ```powershell
 speedtest -L
 ```
 
-Run a specific server:
+Then target a server directly:
 
 ```powershell
 speedtest -s 62530
 ```
 
-Check RSC:
+The repository includes `scripts/speedtest-top-servers.ps1` for the servers that performed well in this particular Singapore test environment.
 
-```powershell
-Get-NetAdapterRsc -Name "WLAN 2" |
-Format-List IPv4OperationalState,IPv4FailureReason,
-            IPv6OperationalState,IPv6FailureReason
-```
-
-Check RSC statistics:
-
-```powershell
-(Get-NetAdapterStatistics -Name "WLAN 2").RscStatistics | Format-List *
-```
-
----
-
-## Interpretation caution
-
-A Speedtest result is not a pure Wi-Fi benchmark. It also depends on:
-
-- server capacity
-- ISP routing
-- TCP behavior
-- local CPU scheduling
-- Windows network stack
-- driver behavior
-- current RF conditions
-
-The important result in this case is not simply “4.54 Gbps”. It is the combination of:
-
-```text
-same hardware
-same Windows installation
-RSC False → True
-WFP/NDIS blockers removed
-RSC counters become active
-throughput roughly doubles
-```
-
-That is what makes the diagnosis convincing.
+[Back to README](../README.md) · [中文版本](03-benchmarks.zh-CN.md)

@@ -1,55 +1,49 @@
-# Part 2 — Multi-Gig throughput limited by RSC / NDIS / WFP
+# Multi-Gig Throughput Failure on Windows: RSC, NDIS and WFP
 
-## Symptom after 6 GHz was fixed
+[English](02-rsc-ndis-wfp.md) | [简体中文](02-rsc-ndis-wfp.zh-CN.md) · [Back to README](../README.md)
 
-After 6 GHz / Wi-Fi 7 / 320 MHz worked, Windows still showed a second independent problem:
+## Symptom
 
-```text
-PHY / link rate: very high
-Windows Speedtest: roughly 1.8–2.2 Gbps
-Ubuntu on same hardware: significantly faster
-```
+After 6 GHz was finally working, the MT7927 negotiated a very high Wi-Fi 7 PHY rate, but Windows download throughput was still much lower than expected, typically around **1.8–2.2 Gbps**.
 
-This suggested the RF link itself was no longer the primary bottleneck.
+Ubuntu on the same hardware had already demonstrated substantially higher throughput, so this was unlikely to be a PCIe or RF ceiling.
+
+The useful question became:
+
+> **What in the Windows receive path is preventing the host from processing multi-gigabit traffic efficiently?**
 
 ---
 
-## The key command: inspect RSC operational state
+## The key discovery: RSC was enabled but not operational
+
+Run:
 
 ```powershell
 Get-NetAdapterRsc -Name "WLAN 2" | Format-List *
 ```
 
-The initial result was effectively:
+The important initial state was:
 
 ```text
 Enabled     : True
 Operational : False
 ```
 
-That distinction matters:
+This is easy to miss. A system may report that RSC is enabled in configuration while Windows has disabled it at runtime because another networking component is incompatible.
 
-> RSC configured as enabled does not mean Windows is actually using it.
-
-RSC = Receive Segment Coalescing. At multi-gigabit receive rates, it reduces per-packet overhead by coalescing received TCP segments before higher layers process them.
+RSC stands for **Receive Segment Coalescing**. At high receive rates, it reduces per-packet processing overhead by coalescing multiple TCP segments before they travel further up the Windows networking stack.
 
 ---
 
-## First failure reason: `NDISCompatibility`
+## Stage 1 — `NDISCompatibility`
 
-The first RSC failure reason was:
+The original failure reason was:
 
 ```text
 NDISCompatibility
 ```
 
-Adapter bindings were inspected:
-
-```powershell
-Get-NetAdapterBinding -Name "WLAN 2"
-```
-
-Three Siemens / PROFINET components were bound to the Wi-Fi adapter:
+The WLAN adapter had three enabled Siemens/PROFINET bindings:
 
 ```text
 s7PnDiscoveryDriver
@@ -57,9 +51,16 @@ Siem_ISOTrans
 SI_SNPNIO
 ```
 
-They were disabled **only on the WLAN adapter** during testing.
+They were disabled **only on the Wi-Fi adapter** for testing.
 
-After that, the RSC failure reason changed from:
+Check bindings with:
+
+```powershell
+Get-NetAdapterBinding -Name "WLAN 2" |
+Format-Table DisplayName,ComponentID,Enabled -Auto
+```
+
+After disabling the Siemens bindings, the RSC failure changed from:
 
 ```text
 NDISCompatibility
@@ -71,53 +72,43 @@ to:
 WFPCompatibility
 ```
 
-That was valuable evidence: the NDIS layer blocker had been removed, exposing a second blocker further up the Windows filtering stack.
+That was a very useful transition: it proved an NDIS-layer blocker had been removed, while revealing a second independent problem further up the stack.
 
-### Important
-
-Do not blindly disable these bindings on systems that actually use Siemens / PROFINET over that interface.
+> If you actually use Siemens PROFINET through the same adapter, do not copy this configuration blindly. The point is to isolate filter compatibility, not to universally disable industrial networking software.
 
 ---
 
-## Second failure reason: `WFPCompatibility`
+## Stage 2 — `WFPCompatibility`
 
-WFP = Windows Filtering Platform.
+WFP stands for **Windows Filtering Platform**. VPNs, security software, proxies, accelerators and packet-filtering products can register WFP providers, sublayers, filters and callouts.
 
-The state was exported with:
+The WFP state was exported with:
 
 ```powershell
 netsh wfp show state file=C:\wfp_current.xml
 ```
 
-Then callouts / providers were inspected.
-
-The machine had multiple network-related products installed, including:
-
-- Cisco Secure Client / AnyConnect
-- Windows Web Threat Defense
-- NetFilter SDK based software
-- XunYou / 迅游
-- other acceleration / proxy tools
-
-The only reliable way to avoid false attribution was A/B testing:
+The investigation then used strict A/B testing:
 
 ```text
-stop one component
+stop one component group
         ↓
 restart WLAN adapter
         ↓
 export WFP state again
         ↓
-check callout counts
-        ↓
-check Get-NetAdapterRsc again
+re-check RSC
 ```
+
+This is much more useful than shutting down every network/security component at once, because it tells you which component is actually causal.
 
 ---
 
-## Cisco Secure Client was tested and retained
+## Components that were tested
 
-Relevant components included:
+### Cisco Secure Client / AnyConnect
+
+Relevant pieces included:
 
 ```text
 service : csc_vpnagent
@@ -126,27 +117,19 @@ file    : acsock64.sys
 callout : NgcSock
 ```
 
-Cisco was temporarily stopped during isolation.
-
-However, the final working state still contained:
-
-```text
-NgcSock = 4
-```
-
-while RSC was:
+Cisco was temporarily stopped during isolation, but the final working configuration still had `NgcSock` callouts present while RSC remained:
 
 ```text
 True / NoFailure
 ```
 
-So Cisco Secure Client was **not** a blocker that needed permanent removal on this machine.
+Therefore Cisco Secure Client was **not** a blocker that needed permanent removal on this machine.
 
 ---
 
-## Windows Web Threat Defense was also retained
+### Windows Web Threat Defense
 
-Relevant components:
+Relevant pieces:
 
 ```text
 service : webthreatdefsvc
@@ -154,23 +137,28 @@ driver  : wtd.sys
 callout : Nsr
 ```
 
-Stopping the service reduced Nsr callouts, but RSC still remained `WFPCompatibility` at that stage.
+Stopping the service removed the `Nsr` callouts, but RSC remained blocked at that point.
 
-Later, the final working state still had:
+In the final working state, `Nsr` callouts were present while RSC still reported `True / NoFailure`.
 
-```text
-Nsr = 2
-```
-
-with RSC fully operational.
-
-Therefore Windows Web Threat Defense was also not a component that needed permanent disabling.
+Therefore Windows WTD did **not** need to be disabled for the final fix.
 
 ---
 
-## XunYouFilter: confirmed blocker
+## Confirmed blocker #1 — `XunYouFilter.sys`
 
-Kernel driver inspection identified:
+A suspicious set of generic WFP names appeared in the XML, including names such as:
+
+```text
+Microsoft Provider
+Microsoft Sublayer
+Microsoft Stream Callout
+Microsoft Flow Established Callout
+```
+
+Those names were misleading because they looked like Microsoft-owned objects.
+
+By correlating WFP objects with loaded kernel drivers and inspecting binary strings, they were mapped to:
 
 ```text
 Service      : XunYouFilter
@@ -180,26 +168,9 @@ Company      : Sichuan XunYou Network Technology Co.
 Version      : 1.0.0.50
 ```
 
-The WFP objects it registered had misleading generic names such as:
+After stopping `XunYouFilter`, the generic stream callouts disappeared.
 
-```text
-Microsoft Provider
-Microsoft Sublayer
-Microsoft Stream Callout
-Microsoft Flow Established Callout
-```
-
-Looking only at the XML made these easy to mistake for Microsoft components.
-
-After stopping:
-
-```powershell
-sc.exe stop XunYouFilter
-```
-
-those generic callouts disappeared.
-
-In the clean A/B state where the other known blockers had already been removed, RSC immediately became:
+In the already-cleaned test state, that change caused RSC to become:
 
 ```text
 IPv4OperationalState : True
@@ -208,36 +179,33 @@ IPv6OperationalState : True
 IPv6FailureReason    : NoFailure
 ```
 
-So `XunYouFilter.sys` was a confirmed WFP/RSC blocker on this machine.
+So `XunYouFilter` was a confirmed WFP blocker.
 
 ---
 
-## NetFilter SDK: another independent blocker
+## Confirmed blocker #2 — NetFilter SDK
 
-After reboot / service restoration, there was an important second failure case:
+After a later reboot restored normal services, RSC became blocked again even though XunYouFilter was stopped/disabled.
 
-```text
-XunYouFilter = stopped / disabled
-Siemens WLAN bindings = disabled
-RSC = WFPCompatibility
-```
-
-The remaining WFP state included:
+Current state at that time:
 
 ```text
-NFSDK   = 32
-NgcSock = 4
-Nsr     = 2
+XunYouFilter = stopped
+Siemens      = disabled
+NFSDK        = 32 callout matches
+NgcSock      = 4
+Nsr          = 2
+RSC          = False / WFPCompatibility
 ```
 
-Corresponding kernel drivers:
+Two kernel drivers were running:
 
 ```text
 netfilter2.sys
 nftchopix.sys
 ```
 
-File metadata:
+Both identified as:
 
 ```text
 Description      : NetFilter SDK WFP Driver (WPP)
@@ -245,35 +213,33 @@ Version          : 1.6.3.0
 OriginalFilename : netfilter2.sys
 ```
 
-`nftchopix.sys` also reported `OriginalFilename : netfilter2.sys`, and both files had the same size.
+`nftchopix.sys` even reported `netfilter2.sys` as its original filename.
 
-Their Microsoft Hardware Compatibility Publisher signature did **not** mean they were Microsoft-authored drivers; it only meant the third-party driver had a valid Microsoft compatibility signature.
+A valid Microsoft Hardware Compatibility Publisher signature did **not** mean these were Microsoft system drivers; it only meant the third-party drivers were signed through Microsoft's compatibility/signing process.
 
 ---
 
-## Decisive NFSDK A/B test
+## The clean NFSDK A/B test
 
-Before stopping the two drivers:
+Before:
 
 ```text
-netfilter2  Running
-nftchopix   Running
-
+netfilter2  = Running
+nftchopix   = Running
 NFSDK       = 32
 NgcSock     = 4
 Nsr         = 2
-
 RSC         = False / WFPCompatibility
 ```
 
-Stop only NFSDK:
+Only the two NFSDK drivers were stopped:
 
 ```powershell
 sc.exe stop netfilter2
 sc.exe stop nftchopix
 ```
 
-Restart WLAN:
+The WLAN adapter was restarted:
 
 ```powershell
 Disable-NetAdapter "WLAN 2" -Confirm:$false
@@ -282,45 +248,42 @@ Enable-NetAdapter "WLAN 2" -Confirm:$false
 Start-Sleep 6
 ```
 
-Afterwards:
+After:
 
 ```text
-NFSDK    = 0
-NgcSock  = 4
-Nsr      = 2
-```
+NFSDK   = 0
+NgcSock = 4
+Nsr     = 2
 
-and RSC became:
-
-```text
 IPv4OperationalState : True
 IPv4FailureReason    : NoFailure
 IPv6OperationalState : True
 IPv6FailureReason    : NoFailure
 ```
 
-This proves two things at once:
+This is strong causal evidence that the NetFilter SDK drivers were another independent WFP blocker.
 
-1. NetFilter SDK was an independent WFPCompatibility blocker.
-2. Cisco NgcSock and Windows Nsr could remain present without breaking RSC in the final configuration.
+It also demonstrates that the remaining Cisco and Windows WTD callouts were compatible with RSC in the final state.
 
 ---
 
-## Which program installed `netfilter2` / `nftchopix`?
+## Which application installed `netfilter2` / `nftchopix`?
 
-The system had several accelerators / proxy tools installed historically.
+Several accelerator/proxy/VPN products had existed on the machine. Some were uninstalled before ownership could be perfectly reconstructed.
 
-Two programs were removed before further tests, while QuickFox and UU were later launched individually. Neither relaunched these two drivers.
+QuickFox and UU were later opened while both NFSDK drivers remained stopped, so they did not immediately re-load those drivers in that test.
 
-Therefore this write-up intentionally **does not claim a 100% owner attribution** for the two residual NetFilter SDK drivers.
+The safest conclusion is therefore:
 
-That uncertainty is important: do not turn a machine-specific observation into a generic blacklist.
+> `netfilter2.sys` and `nftchopix.sys` were third-party NetFilter SDK remnants from networking/acceleration software, but the historical owner was not proven with 100% certainty.
+
+The repository intentionally does not invent an owner.
 
 ---
 
 ## Final cleanup
 
-Once the unwanted software had been removed and the A/B result was proven, the following were stopped and disabled:
+After confirming the drivers were not needed and that RSC stayed healthy across reboot, the following were removed:
 
 ```text
 XunYouFilter
@@ -328,18 +291,7 @@ netfilter2
 nftchopix
 ```
 
-After reboot, RSC remained fully operational. The unused driver services and `.sys` files were then removed.
-
-Final verification:
-
-```powershell
-Get-CimInstance Win32_SystemDriver |
-Where-Object Name -in 'netfilter2','nftchopix','XunYouFilter'
-```
-
-returned no matching drivers.
-
-At the same time:
+Final driver query returned no entries for those names, while RSC remained:
 
 ```text
 IPv4OperationalState : True
@@ -350,62 +302,103 @@ IPv6FailureReason    : NoFailure
 
 ---
 
-## RSC statistics proved the fix was real
+## Verifying that RSC is actually processing traffic
 
-Before / after a Speedtest, RSC statistics changed by gigabytes:
+Do not stop at the boolean state. Check counters:
+
+```powershell
+(Get-NetAdapterStatistics -Name "WLAN 2").RscStatistics | Format-List *
+```
+
+One observed Speedtest before/after:
 
 ```text
 Before:
-CoalescedBytes   ≈ 469 MB
-CoalescedPackets ≈ 321k
+CoalescedBytes   ≈ 469,690,352
+CoalescedPackets ≈ 321,744
+CoalescingEvents ≈ 15,424
 
 After:
-CoalescedBytes   ≈ 3.72 GB
-CoalescedPackets ≈ 2.55 M
+CoalescedBytes   ≈ 3,720,027,020
+CoalescedPackets ≈ 2,548,002
+CoalescingEvents ≈ 178,700
 ```
 
-That is much stronger evidence than simply observing a higher benchmark score.
-
-The receive path was genuinely coalescing traffic after the blockers were removed.
+That proves several gigabytes of receive traffic were genuinely being coalesced.
 
 ---
 
-## Generic troubleshooting recipe
+## Throughput impact
 
-### If `FailureReason = NDISCompatibility`
+Before the full RSC fix, Windows commonly sat around:
 
-Inspect adapter bindings:
-
-```powershell
-Get-NetAdapterBinding -Name "WLAN 2" |
-Format-Table DisplayName,ComponentID,Enabled -Auto
+```text
+~1.8–2.2 Gbps
 ```
 
-Look for third-party:
+After the blockers were removed, complete Speedtest results reached:
 
-- LWF / filter drivers
-- VPN components
-- packet capture components
-- industrial networking stacks
-- virtual switch / bridge components
-- QoS / traffic shapers
+```text
+~4.5 Gbps download
+```
 
-### If `FailureReason = WFPCompatibility`
+One complete result:
 
-Export WFP:
+https://www.speedtest.net/result/c/dd48f131-0ddf-4158-aba9-dba5a3884f41
+
+The improvement was therefore not a tiny tuning gain; it was roughly a doubling of effective receive throughput on the same hardware.
+
+---
+
+## Generic troubleshooting method
+
+If `Get-NetAdapterRsc` reports `Operational=False`:
+
+### `NDISCompatibility`
+
+Inspect:
+
+- adapter bindings;
+- NDIS lightweight filters (LWF);
+- MUX/intermediate drivers;
+- packet-capture/industrial/virtual-network components.
+
+Command:
+
+```powershell
+Get-NetAdapterBinding -Name "WLAN 2"
+```
+
+### `WFPCompatibility`
+
+Inspect:
+
+- VPN clients;
+- endpoint security / web filters;
+- game accelerators;
+- proxy/tunneling software;
+- traffic shapers;
+- third-party WFP callout drivers.
+
+Export:
 
 ```powershell
 netsh wfp show state file=C:\wfp_current.xml
 ```
 
-Inspect providers / callouts and A/B one third-party component at a time.
-
-Do not disable BFE, Defender, Windows Firewall or random Microsoft services just because they appear in WFP output.
+Then A/B one component at a time.
 
 ---
 
-## Final lesson
+## The most important lesson
 
-When link/PHY rate is already high, do not assume every throughput problem is RF or a bad Wi-Fi driver.
+When PHY/link rate is already high, do not spend all your time on:
 
-A legacy / incompatible Windows network filter can turn a multi-gigabit link into a ~2 Gbps system-level ceiling while the radio itself is perfectly healthy.
+- driver versions;
+- NIC advanced properties;
+- PCIe generation guesses;
+- random registry “optimizations.”
+
+A single incompatible Windows network filter can disable an important receive-offload path and cut multi-gigabit throughput dramatically.
+
+[Back to README](../README.md) · [中文版本](02-rsc-ndis-wfp.zh-CN.md)

@@ -1,0 +1,8 @@
+*.xml
+*.log
+*.cab
+*.rom
+*.bin
+*.fd
+*.cap
+DriverBackup_RSC/

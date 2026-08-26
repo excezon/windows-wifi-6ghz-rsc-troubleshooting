@@ -1,15 +1,26 @@
 # Windows 6 GHz & Multi-Gig Wi-Fi Troubleshooting
 
-## MediaTek MT7927 / MT7922 / AMD RZ616 ACPI regulatory locks, plus vendor-agnostic RSC / NDIS / WFP debugging
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-> 一次真实的 Windows 11 Multi-Gig Wi-Fi 排障记录。
->
-> 实测主机是 **玄派 T141 / MetawillBook03 + MediaTek MT7927 Wi-Fi 7**。最终解决了两个完全独立的问题：
->
-> 1. **Windows 看不到 / 连不上 6 GHz**；
-> 2. **6 GHz 解锁后 PHY 很高，但实际下载长期只有约 1.8–2.2 Gbps。**
->
-> 最终确认：第一个问题来自 **OEM BIOS / ACPI 的 MediaTek MTCL regulatory 配置**；第二个问题来自 **Windows 网络栈中的第三方 NDIS / WFP filter，导致 RSC 无法 Operational**。
+A real-world Windows 11 troubleshooting case study covering two independent problems on a MediaTek MT7927 Wi-Fi 7 laptop:
+
+1. **Windows could not see or connect to 6 GHz at all.**
+2. **After 6 GHz was unlocked, link/PHY rate was high but real download throughput stayed around 1.8–2.2 Gbps.**
+
+The two root causes turned out to be completely different:
+
+- **6 GHz issue:** an OEM BIOS/ACPI MediaTek `MTCL` regulatory/platform configuration explicitly disabled 6 GHz for the Windows driver.
+- **Throughput issue:** third-party NDIS/WFP filters prevented Windows Receive Segment Coalescing (RSC) from becoming operational.
+
+After fixing both layers, the same machine reached:
+
+- 6 GHz / Wi-Fi 7 / 320 MHz operation;
+- about **5764.8 Mbps** 2×2 EHT PHY when reported correctly;
+- RSC IPv4 and IPv6 both `True / NoFailure`;
+- up to **4541.58 Mbps** complete Ookla CLI download result;
+- about **344 MB/s (~2.75 Gbps)** real Steam download in one test.
+
+> This repository is not a universal binary patch. The **diagnostic methodology** is the reusable part. The exact ACPI/MTCL patch is machine- and BIOS-specific.
 
 **Keywords:** `Windows 11 6 GHz` · `MT7927` · `MT7922` · `AMD RZ616` · `Wi-Fi 6E` · `Wi-Fi 7` · `EHT320` · `ACPI` · `DSDT` · `MTCL` · `RSC` · `NDISCompatibility` · `WFPCompatibility`
 
@@ -17,28 +28,30 @@
 
 ## TL;DR
 
-这台机器最终的两条根因链：
+### Problem A — Windows had no 6 GHz
 
 ```text
-Problem A: Windows 无 6 GHz
+Windows cannot use 6 GHz
         ↓
-Linux 同硬件可正常使用 6 GHz
+Same hardware works on Ubuntu
         ↓
-排除网卡 / 天线 / AP / PCIe
+NIC / antenna / AP / PCIe largely ruled out
         ↓
-拆 ACPI DSDT
+Inspect BIOS ACPI / DSDT
         ↓
-MediaTek MTCL: mode_6g = 0
+MediaTek MTCL reports mode_6g = 0
         ↓
-用 patched ACPI table 覆盖
+Patch ACPI table and regulatory data
         ↓
-Windows 6 GHz / 802.11be / 320 MHz 正常
+Load patched table through acpitabl.dat
+        ↓
+Windows 6 GHz / 802.11be / 320 MHz works
 ```
 
+### Problem B — Multi-gig PHY but ~2 Gbps real throughput
+
 ```text
-Problem B: Windows 吞吐约 1.8–2.2 Gbps
-        ↓
-PHY 明显更高
+High PHY, only ~1.8–2.2 Gbps download
         ↓
 Get-NetAdapterRsc
         ↓
@@ -51,45 +64,28 @@ WFPCompatibility
   ├─ XunYouFilter
   └─ NetFilter SDK (netfilter2 / nftchopix)
         ↓
-移除 blocker
+Remove / disable the actual blockers
         ↓
 RSC IPv4/IPv6 = True / NoFailure
         ↓
-Speedtest 最高约 4.54 Gbps
+~4.54 Gbps complete Speedtest result
 ```
 
 ---
 
-## 最终结果
+## Test platform
 
-- **6 GHz 正常**
-- **Wi-Fi 7 / 802.11be 正常**
-- **320 MHz 正常**
-- 2×2 EHT PHY 正常，正常显示时约 **5764.8 Mbps**
-- RSC IPv4 / IPv6 均为 **`True / NoFailure`**
-- Ookla CLI 完整测速最高约 **4541.58 Mbps**
-- Steam 下载 Cyberpunk 2077 曾到约 **344 MB/s ≈ 2.75 Gbps**
-
-最高完整 Speedtest：
-
-**4541.58 Mbps download / 2395.46 Mbps upload**  
-https://www.speedtest.net/result/c/dd48f131-0ddf-4158-aba9-dba5a3884f41
-
----
-
-## 测试平台
-
-| 项目 | 配置 |
+| Item | Configuration |
 |---|---|
-| Laptop | 玄派 T141 / MetawillBook03 |
+| Laptop | Xuanpai T141 / MetawillBook03 |
 | CPU | AMD Ryzen 7 8845HS |
 | BIOS | InsydeH2O `T141HPTXPV0606` |
 | BIOS date | 2024-08-19 |
 | OS | Windows 11 25H2, build 26200 |
-| Wi-Fi | MediaTek MT7927 Wi-Fi 7 |
+| Wi-Fi card | MediaTek MT7927 Wi-Fi 7 |
 | PCI ID | `14c3:7927` |
 | Windows driver | `5.7.0.6079` |
-| Driver INF | `MTK7927_MODE2.ndi.NT` / installed as `oem238.inf` |
+| Driver INF | `MTK7927_MODE2.ndi.NT`, installed as `oem238.inf` |
 | Spatial streams | 2×2 |
 | Channel width | 320 MHz |
 | Expected max PHY | about 5764.8 Mbps |
@@ -99,7 +95,7 @@ https://www.speedtest.net/result/c/dd48f131-0ddf-4158-aba9-dba5a3884f41
 | Final channel | 69 |
 | Security | WPA3-Personal (H2E), CCMP |
 
-最终验收：
+Final validation included:
 
 ```text
 Band                   : 6 GHz
@@ -110,104 +106,95 @@ Signal                 : 77%
 Rssi                   : -66
 ```
 
-某次 `netsh wlan show interfaces` 还错误显示：
+At one point `netsh wlan show interfaces` incorrectly displayed:
 
 ```text
 Receive rate (Mbps)    : 46000
 Transmit rate (Mbps)   : 46000
 ```
 
-**46 Gbps 是 MT7927 / 当前 Windows 驱动的显示 bug，不是真实 PHY。**
+That **46 Gbps value is a Windows/driver reporting bug**, not the real PHY. Earlier sane reports were around 5764.8 Mbps, which is consistent with a 2×2 320 MHz EHT link.
 
 ---
 
-## 适用范围 / Applicability
+## Applicability
 
-这不是“一键 patch”，而是一套分层排障方法。
-
-| 模块 | 泛用程度 | 说明 |
+| Area | Reusability | Notes |
 |---|---|---|
-| Linux / Windows 交叉验证 6 GHz | 高 | 区分硬件、AP 与 Windows 平台策略问题 |
-| BIOS / ACPI regulatory 排查 | 中高 | MediaTek 平台尤其值得检查 |
-| `MTCL` 思路 | 中高 | 本案例在 MT7927 上实锤；MT7922 / AMD RZ616 有参考价值 |
-| `mode_6g` 具体 binary patch | 低 | **机器 / BIOS 特定，禁止盲目照抄** |
-| `Get-NetAdapterRsc` | 很高 | Windows 网络适配器通用 |
-| `NDISCompatibility` 排障 | 很高 | 与网卡品牌无关 |
-| `WFPCompatibility` 排障 | 很高 | 与网卡品牌无关 |
-| Siemens / XunYou / NFSDK 名称 | 低 | 仅本机实测 blocker，不是通用黑名单 |
-| RSC statistics + Speedtest A/B | 很高 | 适合 Multi-Gig Windows 网络排障 |
+| Linux-vs-Windows 6 GHz A/B test | High | Excellent way to separate hardware/AP problems from Windows platform-policy problems |
+| BIOS/ACPI regulatory investigation | Medium–High | Especially relevant to MediaTek-based platforms |
+| `MTCL` investigation | Medium–High | Confirmed on this MT7927 case; worth checking on related MT7922 / AMD RZ616 systems |
+| Exact `mode_6g` binary patch | Low | **BIOS-specific. Do not copy blindly.** |
+| `Get-NetAdapterRsc` | Very high | Generic Windows network-adapter diagnostic |
+| `NDISCompatibility` troubleshooting | Very high | Vendor-independent |
+| `WFPCompatibility` troubleshooting | Very high | Vendor-independent |
+| Siemens / XunYou / NFSDK names | Low | Blockers on this machine only, not a universal blacklist |
+| RSC counters + throughput A/B | Very high | Useful for many multi-gig Windows networking problems |
 
-### AMD RZ616 / MediaTek MT7922
+### MT7922 / AMD RZ616
 
-AMD RZ616 属于 MediaTek MT7922 系列方案。如果出现：
+AMD RZ616 is based on the MediaTek MT7922 family. If a system shows this combination:
 
 ```text
-硬件明确支持 6 GHz
-Linux 可以使用 6 GHz
-Windows 驱动也声称支持 6 GHz
-但 Windows 扫不到 / 不允许连接 6 GHz
+hardware supports 6 GHz
+Linux can use 6 GHz
+Windows driver claims 6 GHz capability
+Windows still cannot scan/connect to 6 GHz
 ```
 
-那么检查 OEM BIOS / ACPI 是否下发了错误或受限的 regulatory/platform data，是很合理的一步。
+then checking whether the OEM BIOS/ACPI supplies restrictive or incorrect regulatory/platform data to the MediaTek Windows driver is a reasonable next step.
 
-**注意：本仓库不声称 MT7927 的 DSDT patch 可以直接套到 MT7922 / RZ616。可以复用的是诊断逻辑，不是未经验证的二进制 patch。**
+This repository **does not claim that the MT7927 DSDT patch can be copied directly to MT7922/RZ616**. Reuse the diagnosis, not an unverified binary patch.
 
-RSC / NDIS / WFP 部分则更泛用：Intel、Qualcomm、Realtek，甚至高速有线网卡，只要出现“Link/PHY 很高，但 Windows 吞吐明显异常”，都值得检查 RSC 的 Operational State 与 FailureReason。
+The RSC/NDIS/WFP part is broader still: Intel, Qualcomm, Realtek, MediaTek, and even high-speed wired adapters can all benefit from checking RSC operational state when link speed is high but Windows throughput is unexpectedly low.
 
 ---
 
-## 问题一：为什么 Windows 没有 6 GHz？
+## Part 1 — 6 GHz was blocked by BIOS/ACPI policy
 
-关键证据不是反复换 Windows 驱动，而是 **跨 OS A/B**。
+The decisive clue was an operating-system A/B test.
 
-同一块 MT7927、同一台电脑、同一个 AP，在 Ubuntu Live 中设置 Singapore regulatory domain 后可以工作：
+On the exact same laptop, NIC, antennas, and router, Ubuntu could use 6 GHz after setting the Singapore regulatory domain:
 
 ```bash
 sudo iw reg set SG
 iw reg get
 ```
 
-这基本排除了：
+Windows still could not.
 
-```text
-MT7927 硬件
-天线
-路由器 6 GHz
-320 MHz 能力
-PCIe 链路
-```
+That largely ruled out:
 
-继续拆 BIOS ACPI DSDT 后发现 MediaTek `MTCL` 返回：
+- the MT7927 radio hardware;
+- antennas;
+- the router's 6 GHz radio;
+- 320 MHz capability;
+- PCIe bandwidth.
+
+ACPI/DSDT inspection then revealed a MediaTek `MTCL` buffer:
 
 ```text
 4D 54 43 4C 01 00 80 00 01 08 00 00
 ```
 
-关键状态：
+The important interpretation was:
 
 ```text
 MTCL version = 1
 mode_6g      = 0
 ```
 
-也就是说，平台层直接告诉 MediaTek Windows driver：**不要启用 6 GHz。**
+In other words, the platform firmware was effectively telling the Windows MediaTek driver **not to enable 6 GHz**.
 
-修复时将目标改成：
+The working ACPI modification changed the 6 GHz mode and corresponding Singapore regulatory allowance, then corrected the ACPI checksum/revision.
 
-```text
-mode_6g: 0 → 1
-+ 修正对应 Singapore 的 regulatory bit
-```
-
-并重新处理 ACPI checksum / OEM revision。
-
-详细过程见：**[docs/01-6ghz-acpi.md](docs/01-6ghz-acpi.md)**
+Full details: **[6 GHz / ACPI investigation](docs/01-6ghz-acpi.md)** · [中文](docs/01-6ghz-acpi.zh-CN.md)
 
 ---
 
-## 为什么现在仍然是 Test Mode？
+## Why `acpitabl.dat` and Test Mode are still used
 
-当前采用 Windows 官方的 ACPI table override 机制：
+The currently chosen solution uses Windows' ACPI table replacement mechanism:
 
 ```text
 patched DSDT / AML
@@ -216,47 +203,43 @@ C:\Windows\System32\acpitabl.dat
         ↓
 Windows boot
         ↓
-覆盖 firmware ACPI table
+firmware ACPI table replacement
 ```
 
-启用：
+with:
 
 ```powershell
 bcdedit /set testsigning on
 ```
 
-因此右下角会显示 `Test Mode`，并且当前方案需要 Secure Boot 关闭。
+This leaves the Windows `Test Mode` watermark and requires Secure Boot to remain off for this setup.
 
-之所以没有直接魔改并刷 BIOS：**DSDT 本身能改，但 Insyde/AMD 官方 BIOS 包存在 Secure Flash / OEM 签名链。为了去掉一个水印冒主板变砖风险不划算。**
+A direct BIOS modification was investigated, but the Insyde/AMD update package contains Secure Flash / OEM signing. Editing DSDT is not the hard part; safely flashing a modified, no-longer-OEM-signed firmware is the risky part. For this case, keeping a reversible ACPI override is a better tradeoff than risking a brick merely to remove a watermark.
 
 ---
 
-## 问题二：为什么 Windows PHY 很高但只有约 2 Gbps？
+## Part 2 — RSC was enabled but not operational
 
-关键命令：
+After 6 GHz was fixed, Windows still underperformed badly relative to PHY.
+
+The key command was:
 
 ```powershell
 Get-NetAdapterRsc -Name "WLAN 2" | Format-List *
 ```
 
-最初是：
+Initially:
 
 ```text
 Enabled     : True
 Operational : False
 ```
 
-这说明一个很容易被忽略的问题：
+This distinction matters: **RSC being configured as enabled does not mean Windows is actually using it.**
 
-> **RSC 配置为 Enabled，不代表它实际 Operational。**
+### First failure: `NDISCompatibility`
 
-最开始 FailureReason：
-
-```text
-NDISCompatibility
-```
-
-找到三个 Siemens / PROFINET WLAN bindings：
+The adapter had three Siemens / PROFINET bindings:
 
 ```text
 s7PnDiscoveryDriver
@@ -264,57 +247,86 @@ Siem_ISOTrans
 SI_SNPNIO
 ```
 
-只在 Wi-Fi adapter 上禁用后，FailureReason 从：
+Disabling those bindings on this Wi-Fi adapter changed the RSC failure from:
 
 ```text
 NDISCompatibility
 ```
 
-变成：
+to:
 
 ```text
 WFPCompatibility
 ```
 
-继续 A/B WFP callout 后，最终实锤两个独立 blocker：
+That proved the Siemens bindings were a real NDIS-layer blocker, but not the only issue.
+
+### Second failure: `WFPCompatibility`
+
+WFP state was exported with:
+
+```powershell
+netsh wfp show state file=C:\wfp_current.xml
+```
+
+Components were then removed one group at a time, with the WLAN adapter restarted and RSC rechecked after each A/B test.
+
+The final confirmed WFP blockers were:
 
 ```text
 XunYouFilter.sys
-netfilter2.sys / nftchopix.sys (NetFilter SDK 1.6.3.0)
+netfilter2.sys
+nftchopix.sys
 ```
 
-而 Cisco Secure Client / NgcSock 以及 Windows Web Threat Defense / Nsr 在最终状态下仍然存在，但 RSC 可以保持：
+The latter two were NetFilter SDK WFP drivers, version 1.6.3.0.
+
+A particularly clean A/B result:
 
 ```text
-IPv4OperationalState : True
-IPv4FailureReason    : NoFailure
-IPv6OperationalState : True
-IPv6FailureReason    : NoFailure
+netfilter2 + nftchopix running
+NFSDK callouts = 32
+RSC = False / WFPCompatibility
+
+        ↓ stop only those two drivers
+
+NFSDK callouts = 0
+NgcSock/Cisco still present
+Nsr/WTD still present
+RSC = True / NoFailure
 ```
 
-所以它们**不是这台机器最终需要删除的 blocker**。
+That also showed that Cisco Secure Client (`NgcSock`) and Windows Web Threat Defense (`Nsr`) did **not** have to be removed in the final working configuration.
 
-详细过程见：**[docs/02-rsc-ndis-wfp.md](docs/02-rsc-ndis-wfp.md)**
+Full details: **[RSC / NDIS / WFP investigation](docs/02-rsc-ndis-wfp.md)** · [中文](docs/02-rsc-ndis-wfp.zh-CN.md)
 
 ---
 
-## 为什么确定 RSC 真的在工作？
+## RSC was not merely “showing green” — it was actually coalescing data
 
-不是只看 `True`。
-
-修复前后观察：
+After the fix, RSC statistics increased rapidly during multi-gig downloads:
 
 ```powershell
-(Get-NetAdapterStatistics -Name "WLAN 2").RscStatistics | fl *
+(Get-NetAdapterStatistics -Name "WLAN 2").RscStatistics | Format-List *
 ```
 
-一次 Speedtest 前后，`CoalescedBytes` 从约 469 MB 增长到约 3.72 GB，`CoalescedPackets` 从约 321k 增长到约 2.55M。
+One observed before/after example:
 
-这说明高速下载流量真的进入了 RSC coalescing path，而不是“玄学优化”。
+```text
+Before:
+CoalescedBytes   ≈ 469 MB
+CoalescedPackets ≈ 321k
+
+After a Speedtest:
+CoalescedBytes   ≈ 3.72 GB
+CoalescedPackets ≈ 2.55M
+```
+
+So the performance improvement was not a placebo registry tweak — large amounts of receive traffic were genuinely flowing through the RSC coalescing path.
 
 ---
 
-## Benchmark 摘要
+## Benchmark highlights
 
 | Server | ID | Download | Upload |
 |---|---:|---:|---:|
@@ -325,27 +337,32 @@ IPv6FailureReason    : NoFailure
 | CBN | 59016 | **3876.87 Mbps** | 2492.94 Mbps |
 | M1 | 7311 | **3737.03 Mbps** | 2443.55 Mbps |
 
-完整结果与 Speedtest URL：**[docs/03-benchmarks.md](docs/03-benchmarks.md)**
+Best complete result in the repeated Symphony run:
 
-以约 5764.8 Mbps PHY 计算：
+**4541.58 Mbps download / 2395.46 Mbps upload**  
+https://www.speedtest.net/result/c/dd48f131-0ddf-4158-aba9-dba5a3884f41
+
+At an approximately 5764.8 Mbps PHY:
 
 ```text
 4541.58 / 5764.8 ≈ 78.8%
 ```
 
-而要到 5 Gbps：
+A hypothetical 5 Gbps Speedtest would require:
 
 ```text
 5000 / 5764.8 ≈ 86.7%
 ```
 
-对 Wi-Fi 应用层吞吐来说已经相当激进，因此约 4.3–4.5 Gbps 基本可以看作这套 2×2 / 320 MHz 链路非常漂亮的现实表现。
+which is extremely aggressive for application-layer Wi-Fi throughput after MAC, ACK, inter-frame spacing, TCP/IP, aggregation, retransmission, and scheduling overheads.
+
+Full results and URLs: **[Benchmarks](docs/03-benchmarks.md)** · [中文](docs/03-benchmarks.zh-CN.md)
 
 ---
 
-## 当前长期状态
+## Final long-term configuration
 
-### 保留
+### Kept
 
 ```text
 C:\Windows\System32\acpitabl.dat
@@ -353,13 +370,9 @@ Test Signing = ON
 Secure Boot = OFF
 ```
 
-以及 WLAN 上：
+and the three Siemens bindings remain disabled on the WLAN adapter.
 
-```text
-Siemens bindings = Disabled
-```
-
-### 已清理
+### Removed after A/B confirmation
 
 ```text
 XunYouFilter
@@ -367,14 +380,14 @@ netfilter2
 nftchopix
 ```
 
-### 正常保留
+### Kept normally
 
 ```text
 Cisco Secure Client / NgcSock
 Windows Web Threat Defense / Nsr
 ```
 
-最终重启验收：
+Final reboot validation:
 
 ```text
 IPv4OperationalState : True
@@ -388,76 +401,62 @@ Radio type : 802.11be
 
 ---
 
-## Scripts
-
-### 一键检查状态
+## Included scripts
 
 ```powershell
 .\scripts\check-status.ps1
+.\scripts\wfp-diagnostics.ps1
+.\scripts\speedtest-top-servers.ps1
 ```
 
-可指定其他 adapter：
+`check-status.ps1` and `wfp-diagnostics.ps1` accept an adapter name, for example:
 
 ```powershell
 .\scripts\check-status.ps1 -Adapter "Wi-Fi"
 ```
 
-### WFP diagnostics
-
-```powershell
-.\scripts\wfp-diagnostics.ps1
-```
-
-### 测试本案例中表现最好的服务器
-
-```powershell
-.\scripts\speedtest-top-servers.ps1
-```
-
 ---
 
-## Quick troubleshooting flow
-
-如果你也遇到类似问题：
+## Quick diagnostic flow
 
 ```text
-6 GHz 不见了
+6 GHz missing
   ↓
-先做 Linux / Windows 同硬件对照
+A/B the same hardware in Linux and Windows
   ↓
 Linux OK, Windows FAIL
   ↓
-查 regulatory / BIOS / ACPI / OEM platform policy
+Investigate regulatory domain / BIOS / ACPI / OEM platform policy
 ```
 
 ```text
-PHY / Link Speed 很高，但 Windows 吞吐低
+High PHY/link rate but low Windows throughput
   ↓
 Get-NetAdapterRsc
   ↓
 Operational=False ?
   ↓
-看 FailureReason
-  ├─ NDISCompatibility → 查 adapter bindings / LWF / MUX
-  └─ WFPCompatibility  → 查 WFP callout / VPN / accelerator / filter driver
+Read FailureReason
+  ├─ NDISCompatibility → inspect bindings / LWF / MUX drivers
+  └─ WFPCompatibility  → inspect WFP callouts / VPN / accelerator / filter drivers
   ↓
-一次只停一个组件做 A/B
+Remove one component at a time
   ↓
-重启 adapter
+Restart adapter
   ↓
-重新检查 RSC + statistics + throughput
+Re-check RSC + counters + throughput
 ```
 
 ---
 
-## 免责声明
+## Safety / limitations
 
-- 6 GHz 受各国家 / 地区无线电法规约束，只应在当地法规允许范围内使用。
-- `acpitabl.dat` 属于 Windows 开发 / 测试用途的 ACPI replacement 机制。
-- 不建议为了去掉 Test Mode 水印，盲目刷修改 BIOS。
-- 不要照抄删除未知 WFP / NDIS driver。
-- Siemens、XunYou、NetFilter SDK 是本机实测 blocker，不代表它们在所有系统上都会导致同样的问题。
-- **尤其不要把本案例的 MTCL binary patch 直接复制到其他 BIOS。**
+- 6 GHz use is subject to local radio regulations. Only use frequencies, channels, and power levels permitted in your jurisdiction.
+- `acpitabl.dat` is a Windows development/testing ACPI replacement mechanism.
+- Do not flash a modified BIOS merely to remove Test Mode unless you understand the platform's recovery and signing model.
+- Do not blindly delete unknown NDIS/WFP drivers.
+- Siemens, XunYou, and NetFilter SDK are **examples from this machine**, not a universal blacklist.
+- **Do not copy this case's MTCL binary patch into another BIOS without independently decoding and validating that firmware.**
 
 ---
 
@@ -474,7 +473,7 @@ Operational=False ?
 
 ## Feedback
 
-如果你遇到相似问题，欢迎带这些信息反馈：
+If you hit a similar problem, the most useful information to include is:
 
 ```text
 Laptop model / BIOS version
@@ -486,4 +485,4 @@ WFP / NDIS blocker
 Before / after throughput
 ```
 
-这样更容易判断不同 OEM、不同 BIOS、不同网卡是否属于同一类问题。
+That makes it much easier to distinguish a reusable platform pattern from a machine-specific quirk.

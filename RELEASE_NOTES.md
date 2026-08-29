@@ -1,3 +1,28 @@
+# v1.1 — Permanent OpenCore 6 GHz Boot
+
+[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
+
+This update documents the final long-term 6 GHz solution after the original `acpitabl.dat + Test Signing` proof-of-fix.
+
+## Highlights
+
+- Verified that the BIOS/ACPI `MTCL` patch works when injected by OpenCore before Windows starts.
+- Performed an A/B/A test: OpenCore → 6 GHz works; direct Windows Boot Manager → 6 GHz disappears; OpenCore again → 6 GHz returns.
+- Migrated the known-good OpenCore setup from USB to the internal EFI System Partition.
+- Preserved the original `EFI\Microsoft`, `EFI\Boot`, and vendor `EFI\Insyde` directories.
+- Backed up the EFI tree and exported BCD before changing the boot path.
+- Changed `{bootmgr}` from `\EFI\Microsoft\Boot\bootmgfw.efi` to `\EFI\OC\OpenCore.efi`.
+- Configured `ShowPicker=false` and `Timeout=0` for effectively silent OpenCore boot.
+- Booted Normal Windows successfully without the USB stick, retained 6 GHz, and removed the daily need for Test Mode.
+- Added complete English and Simplified Chinese permanent-boot guides and refreshed both top-level READMEs.
+
+See:
+
+- `docs/04-opencore-permanent-6ghz.md`
+- `docs/04-opencore-permanent-6ghz.zh-CN.md`
+
+---
+
 # v1.0 — Initial Case Study
 
 [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)

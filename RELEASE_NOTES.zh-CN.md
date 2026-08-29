@@ -1,3 +1,28 @@
+# v1.1 — OpenCore 6 GHz 长期无感自启
+
+[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
+
+这次更新记录了在最初 `acpitabl.dat + Test Signing` 已经证明根因之后，最终完成并验证通过的长期 6 GHz 启动方案。
+
+## 主要更新
+
+- 验证同一份 BIOS/ACPI `MTCL` patch 可以由 OpenCore 在 Windows 启动前注入并生效；
+- 完成 A/B/A 验证：经过 OpenCore → 有 6 GHz；直接 Windows Boot Manager → 6 GHz 消失；再次 OpenCore → 6 GHz 恢复；
+- 把已验证可用的 OpenCore 从 U 盘迁移到内置 EFI System Partition；
+- 保留原始 `EFI\Microsoft`、`EFI\Boot` 和厂商 `EFI\Insyde` 目录，不覆盖；
+- 修改启动路径前先备份 EFI，并单独导出 BCD；
+- 将 `{bootmgr}` 从 `\EFI\Microsoft\Boot\bootmgfw.efi` 改为 `\EFI\OC\OpenCore.efi`；
+- 将 OpenCore 设置为 `ShowPicker=false`、`Timeout=0`，实现接近无感的静默启动；
+- 拔掉 U 盘后，Normal Windows 仍可正常启动并保持 6 GHz，日常不再需要 Test Mode；
+- 新增完整中英文长期启动指南，并重写两份顶层 README，使最终方案成为主线流程。
+
+详见：
+
+- `docs/04-opencore-permanent-6ghz.zh-CN.md`
+- `docs/04-opencore-permanent-6ghz.md`
+
+---
+
 # v1.0 — 首个案例版本
 
 [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
